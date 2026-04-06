@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//d/Documents/aes-master/**)",
+      "Read(//d/Documents/aes-master/src/**)"
+    ]
+  }
+}
