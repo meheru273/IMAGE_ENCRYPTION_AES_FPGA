@@ -284,10 +284,12 @@ module top(
         end
 
         //----------------------------------------------------------
-        // DONE: system complete
+        // DONE: system complete — return to IDLE so decrypt can
+        // be triggered again without needing a full reset+re-encrypt.
         //----------------------------------------------------------
         SYS_DONE: begin
           status_led <= 4'b0100;  // LED2 = done
+          sys_state  <= SYS_IDLE; // allow repeat decrypt
         end
 
         default: sys_state <= SYS_IDLE;
