@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Read(//d/Documents/aes-master/**)",
-      "Read(//d/Documents/aes-master/src/**)"
+      "Read(//d/Documents/aes-master/src/**)",
+      "Bash(python -c \"import reportlab; print\\('ok'\\)\")",
+      "Bash(python make_report.py)"
     ]
   }
 }
