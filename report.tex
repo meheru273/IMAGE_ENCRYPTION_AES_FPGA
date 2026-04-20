@@ -80,10 +80,10 @@ Six custom modules wrap the \texttt{secworks} core. Signal connections
 follow \texttt{top.v}.
 
 \begin{figure}[h]
-\centering
+\hspace*{-1.2cm}
 \begin{tikzpicture}[
   font=\footnotesize,
-  node distance=1.6cm and 1.8cm,
+  node distance=1.6cm and 1.6cm,
   mod/.style={draw,thick,rounded corners,minimum width=2.4cm,
               minimum height=1.0cm,align=center,fill=blue!6},
   ext/.style={draw,thick,minimum width=1.6cm,minimum height=1.0cm,
@@ -114,11 +114,10 @@ follow \texttt{top.v}.
 \draw[flow] (tx)  -- node[lbl,above]{serial} (pc2);
 
 \draw[flow,orange!70!black] (top) -- node[lbl,right]{\texttt{start,mode}} (aes);
-\draw[flow,orange!70!black] (top.east) -| ++(1.0,-2.2)
-      node[lbl,pos=0.25,above]{\texttt{wr/rd\_en,addr}} |- (bram.east);
-\draw[flow,orange!70!black] (top.north) |- ++(-0.6,0.5) -|
-      ($(tx.north)+(0,0.1)$)
-      node[lbl,pos=0.25,above]{\texttt{tx\_data,send}};
+\draw[flow,orange!70!black] (top.west) -| ++(-5.0,-0.4)
+      node[lbl,pos=0.75,left]{\texttt{wr/rd\_en,addr}} |- (bram.west);
+\draw[flow,orange!70!black] (top.west) -| ++(-7.5,-0.8)
+      node[lbl,pos=0.8,left]{\texttt{tx\_data,send}} |- (tx.north);
 \end{tikzpicture}
 \caption{Module-level block diagram. Solid arrows: datapath
 (encrypt flow left$\to$right). Dashed: decrypt readback from BRAM into

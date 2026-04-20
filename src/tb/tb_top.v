@@ -1,10 +1,17 @@
 //======================================================================
-// tb_top.v — End-to-end testbench for top module
+// tb_top.v — End-to-end testbench for top module (4-mode system)
 //
-// Simulates: UART byte stream in -> pixel buffer -> AES encrypt ->
-//            BRAM store -> mode switch -> AES decrypt -> UART out
+// Tests:
+//   Phase 1: Mode 1 (Full encrypt) — send key + 16 plaintext bytes,
+//            receive 16 encrypted bytes back
+//   Phase 2: Mode 3 (Key-only retrieve, correct key) — send key,
+//            receive 16 encrypted bytes, verify match
+//   Phase 3: Mode 3 (Key-only retrieve, wrong key) — send wrong key,
+//            receive single 0xFF byte
+//   Phase 4: Mode 4 (Key-only decrypt) — send key, receive 16
+//            decrypted bytes, verify match with original plaintext
 //
-// Tests with one AES block (16 bytes) for simulation speed.
+// Uses 1 block (16 bytes) via parameter override for speed.
 //======================================================================
 
 `default_nettype none
@@ -26,24 +33,30 @@ module tb_top();
   reg        uart_rx_pin;
   wire       uart_tx_pin;
   reg        mode_sw;
+  reg        mode_sw1;
   reg        btn_start;
   wire [3:0] status_led;
 
   integer    error_ctr;
+  integer    total_errors;
   integer    i;
-  reg  [7:0] test_data [0:15];   // 16 test bytes
-  reg  [7:0] rx_captured [0:15]; // captured from UART TX
+  reg  [7:0] test_data [0:15];         // 16 test plaintext bytes
+  reg  [7:0] test_key [0:15];          // 16 test key bytes
+  reg  [7:0] wrong_key [0:15];         // 16 wrong key bytes
+  reg  [7:0] rx_captured [0:15];       // captured from UART TX
+  reg  [7:0] encrypted_captured [0:15]; // encrypted output for Mode 3 verify
   integer    rx_idx;
 
   //----------------------------------------------------------------
-  // DUT
+  // DUT — override TOTAL_BLOCKS to 1 for simulation speed
   //----------------------------------------------------------------
-  top dut(
+  top #(.TOTAL_BLOCKS(10'd1)) dut(
     .clk         (clk),
     .rst_btn     (rst_btn),
     .uart_rx_pin (uart_rx_pin),
     .uart_tx_pin (uart_tx_pin),
     .mode_sw     (mode_sw),
+    .mode_sw1    (mode_sw1),
     .btn_start   (btn_start),
     .status_led  (status_led)
   );
@@ -93,99 +106,283 @@ module tb_top();
   endtask
 
   //----------------------------------------------------------------
+  // Task: send 16-byte key over UART
+  //----------------------------------------------------------------
+  task send_key_bytes;
+    integer k;
+    begin
+      for (k = 0; k < 16; k = k + 1) begin
+        uart_send(test_key[k]);
+      end
+    end
+  endtask
+
+  //----------------------------------------------------------------
+  // Task: send 16-byte wrong key over UART
+  //----------------------------------------------------------------
+  task send_wrong_key_bytes;
+    integer k;
+    begin
+      for (k = 0; k < 16; k = k + 1) begin
+        uart_send(wrong_key[k]);
+      end
+    end
+  endtask
+
+  //----------------------------------------------------------------
+  // Task: press btnR (rising edge)
+  //----------------------------------------------------------------
+  task press_btn_start;
+    begin
+      @(posedge clk);
+      btn_start = 1;
+      #(2 * CLK_PERIOD);
+      btn_start = 0;
+      #(2 * CLK_PERIOD);
+    end
+  endtask
+
+  //----------------------------------------------------------------
   // Main test
   //----------------------------------------------------------------
   initial begin
-    $display("=== Top-Level End-to-End Testbench ===");
+    $display("============================================================");
+    $display("=== Top-Level 4-Mode End-to-End Testbench ===");
+    $display("============================================================");
     $dumpfile("tb_top.vcd");
     $dumpvars(0, tb_top);
 
     clk         = 0;
     rst_btn     = 1;
     uart_rx_pin = 1;  // idle high
-    mode_sw     = 0;  // encrypt mode
+    mode_sw     = 0;
+    mode_sw1    = 0;
     btn_start   = 0;
-    error_ctr   = 0;
+    total_errors = 0;
 
     // Initialize test data: bytes 0x10..0x1F
     for (i = 0; i < 16; i = i + 1)
       test_data[i] = 8'h10 + i[7:0];
 
+    // Initialize test key: NIST AES-128 key 2b7e151628aed2a6abf7158809cf4f3c
+    test_key[0]  = 8'h2b; test_key[1]  = 8'h7e; test_key[2]  = 8'h15; test_key[3]  = 8'h16;
+    test_key[4]  = 8'h28; test_key[5]  = 8'hae; test_key[6]  = 8'hd2; test_key[7]  = 8'ha6;
+    test_key[8]  = 8'hab; test_key[9]  = 8'hf7; test_key[10] = 8'h15; test_key[11] = 8'h88;
+    test_key[12] = 8'h09; test_key[13] = 8'hcf; test_key[14] = 8'h4f; test_key[15] = 8'h3c;
+
+    // Initialize wrong key: all 0xAA
+    for (i = 0; i < 16; i = i + 1)
+      wrong_key[i] = 8'hAA;
+
+    // Release reset
     #(50 * CLK_PERIOD);
     rst_btn = 0;
     #(50 * CLK_PERIOD);
 
-    // ----------------------------------------------------------
-    // Phase 1: ENCRYPT — send 16 bytes over UART
-    // ----------------------------------------------------------
-    $display("Phase 1: Sending 16 bytes for encryption...");
-    for (i = 0; i < 16; i = i + 1) begin
-      uart_send(test_data[i]);
-      $display("  Sent byte[%0d] = 0x%02h", i, test_data[i]);
-    end
-
-    // Wait for encryption and BRAM write to complete
-    $display("Waiting for encryption to complete...");
-    #(5000 * CLK_PERIOD);
-
-    // ----------------------------------------------------------
-    // Phase 2: DECRYPT — switch mode and trigger readback
-    // ----------------------------------------------------------
-    $display("Phase 2: Switching to decrypt mode...");
-    mode_sw = 1;  // decrypt mode
-    #(100 * CLK_PERIOD);
-
-    // Note: in real hardware, encrypt_done_flag would need all 1024 blocks.
-    // For simulation we directly check the BRAM content and decrypt.
-    // We force the encrypt_done_flag for testing:
-    force dut.encrypt_done_flag = 1'b1;
-    force dut.wr_addr = 10'd1;  // pretend 1 block was stored
+    // ==========================================================
+    // PHASE 1: MODE 1 — Full Encrypt
+    // SW1=0, SW0=0: send key + 16 plaintext bytes, get encrypted
+    // ==========================================================
+    $display("");
+    $display("--- Phase 1: Mode 1 (Full Encrypt) ---");
+    mode_sw  = 0;
+    mode_sw1 = 0;
     #(10 * CLK_PERIOD);
 
-    $display("Triggering decrypt readback...");
-    @(posedge clk);
-    btn_start = 1;
-    #(2 * CLK_PERIOD);
-    btn_start = 0;
+    press_btn_start;
 
-    // Override TOTAL_BLOCKS check: we only encrypted 1 block
-    // Force the system to stop after 1 block by adjusting addressing
-    // (In simulation the FSM will handle this naturally for 1 block if rd_addr+1 matches)
+    // Send 16-byte key
+    $display("Sending 16-byte key...");
+    send_key_bytes;
 
-    // ----------------------------------------------------------
-    // Phase 3: Capture 16 decrypted bytes from UART TX
-    // ----------------------------------------------------------
-    $display("Phase 3: Capturing decrypted bytes from UART TX...");
+    // Send 16 plaintext bytes
+    $display("Sending 16 plaintext bytes...");
     for (i = 0; i < 16; i = i + 1) begin
-      uart_capture(rx_captured[i]);
-      $display("  Captured byte[%0d] = 0x%02h", i, rx_captured[i]);
+      uart_send(test_data[i]);
     end
 
-    // ----------------------------------------------------------
-    // Verify: decrypted bytes should match our original test_data
-    // ----------------------------------------------------------
+    // Wait for encryption
+    $display("Waiting for encryption...");
+    #(5000 * CLK_PERIOD);
+
+    // Capture 16 encrypted bytes streamed back
+    $display("Capturing 16 encrypted bytes...");
+    error_ctr = 0;
+    for (i = 0; i < 16; i = i + 1) begin
+      uart_capture(encrypted_captured[i]);
+      $display("  Encrypted byte[%0d] = 0x%02h", i, encrypted_captured[i]);
+    end
+
+    // Verify encrypted output is not all-zero (basic sanity check)
+    begin : enc_check
+      reg all_zero;
+      all_zero = 1;
+      for (i = 0; i < 16; i = i + 1) begin
+        if (encrypted_captured[i] != 8'h00)
+          all_zero = 0;
+      end
+      if (all_zero) begin
+        $display("  FAIL: Encrypted output is all zeros!");
+        error_ctr = error_ctr + 1;
+      end else begin
+        $display("  OK: Encrypted output is non-zero.");
+      end
+    end
+
+    total_errors = total_errors + error_ctr;
+    if (error_ctr == 0)
+      $display("Phase 1 PASSED");
+    else
+      $display("Phase 1 FAILED (%0d errors)", error_ctr);
+
+    #(500 * CLK_PERIOD);
+
+    // ==========================================================
+    // PHASE 2: MODE 3 — Key-only Retrieve (correct key)
+    // SW1=1, SW0=0: send key, get encrypted BRAM back
+    // ==========================================================
     $display("");
-    $display("Verification:");
+    $display("--- Phase 2: Mode 3 (Key-only Retrieve, correct key) ---");
+    mode_sw  = 0;
+    mode_sw1 = 1;
+    #(10 * CLK_PERIOD);
+
+    press_btn_start;
+
+    // Send same key
+    $display("Sending correct key...");
+    send_key_bytes;
+
+    // Wait for key verification
+    #(500 * CLK_PERIOD);
+
+    // Capture 16 bytes — should match encrypted output from Phase 1
+    $display("Capturing 16 retrieved bytes...");
+    error_ctr = 0;
+    for (i = 0; i < 16; i = i + 1) begin
+      uart_capture(rx_captured[i]);
+      $display("  Retrieved byte[%0d] = 0x%02h", i, rx_captured[i]);
+    end
+
+    // Verify match with Phase 1 encrypted output
+    for (i = 0; i < 16; i = i + 1) begin
+      if (rx_captured[i] !== encrypted_captured[i]) begin
+        $display("  MISMATCH byte[%0d]: encrypted=0x%02h, retrieved=0x%02h",
+                 i, encrypted_captured[i], rx_captured[i]);
+        error_ctr = error_ctr + 1;
+      end
+    end
+
+    total_errors = total_errors + error_ctr;
+    if (error_ctr == 0)
+      $display("Phase 2 PASSED");
+    else
+      $display("Phase 2 FAILED (%0d errors)", error_ctr);
+
+    #(500 * CLK_PERIOD);
+
+    // ==========================================================
+    // PHASE 3: MODE 3 — Key-only Retrieve (wrong key)
+    // SW1=1, SW0=0: send wrong key, expect single 0xFF
+    // ==========================================================
+    $display("");
+    $display("--- Phase 3: Mode 3 (Key-only Retrieve, wrong key) ---");
+    mode_sw  = 0;
+    mode_sw1 = 1;
+    #(10 * CLK_PERIOD);
+
+    press_btn_start;
+
+    // Send wrong key
+    $display("Sending wrong key...");
+    send_wrong_key_bytes;
+
+    // Wait for key verification
+    #(500 * CLK_PERIOD);
+
+    // Capture 1 byte — should be 0xFF
+    $display("Capturing error byte...");
+    error_ctr = 0;
+    begin : wrong_key_check
+      reg [7:0] error_byte;
+      uart_capture(error_byte);
+      $display("  Error byte = 0x%02h", error_byte);
+      if (error_byte !== 8'hFF) begin
+        $display("  FAIL: Expected 0xFF, got 0x%02h", error_byte);
+        error_ctr = error_ctr + 1;
+      end else begin
+        $display("  OK: Received expected 0xFF error byte.");
+      end
+    end
+
+    total_errors = total_errors + error_ctr;
+    if (error_ctr == 0)
+      $display("Phase 3 PASSED");
+    else
+      $display("Phase 3 FAILED (%0d errors)", error_ctr);
+
+    #(500 * CLK_PERIOD);
+
+    // ==========================================================
+    // PHASE 4: MODE 4 — Key-only Decrypt Stored
+    // SW1=1, SW0=1: send key, receive decrypted image
+    // ==========================================================
+    $display("");
+    $display("--- Phase 4: Mode 4 (Key-only Decrypt Stored) ---");
+    mode_sw  = 1;
+    mode_sw1 = 1;
+    #(10 * CLK_PERIOD);
+
+    press_btn_start;
+
+    // Send correct key
+    $display("Sending key for decrypt...");
+    send_key_bytes;
+
+    // Wait for decryption
+    #(5000 * CLK_PERIOD);
+
+    // Capture 16 decrypted bytes — should match original plaintext
+    $display("Capturing 16 decrypted bytes...");
+    error_ctr = 0;
+    for (i = 0; i < 16; i = i + 1) begin
+      uart_capture(rx_captured[i]);
+      $display("  Decrypted byte[%0d] = 0x%02h", i, rx_captured[i]);
+    end
+
+    // Verify match with original plaintext
     for (i = 0; i < 16; i = i + 1) begin
       if (rx_captured[i] !== test_data[i]) begin
-        $display("  MISMATCH byte[%0d]: sent 0x%02h, got 0x%02h",
+        $display("  MISMATCH byte[%0d]: original=0x%02h, decrypted=0x%02h",
                  i, test_data[i], rx_captured[i]);
         error_ctr = error_ctr + 1;
       end
     end
 
+    total_errors = total_errors + error_ctr;
     if (error_ctr == 0)
-      $display("*** END-TO-END TEST PASSED: All 16 bytes match ***");
+      $display("Phase 4 PASSED");
     else
-      $display("*** %0d BYTE MISMATCHES ***", error_ctr);
+      $display("Phase 4 FAILED (%0d errors)", error_ctr);
+
+    // ==========================================================
+    // Final summary
+    // ==========================================================
+    $display("");
+    $display("============================================================");
+    if (total_errors == 0)
+      $display("*** ALL TESTS PASSED ***");
+    else
+      $display("*** %0d TOTAL ERRORS ***", total_errors);
+    $display("============================================================");
 
     #(100 * CLK_PERIOD);
     $finish;
   end
 
-  // Timeout watchdog (generous for UART timing)
+  // Timeout watchdog (generous for UART timing across 4 phases)
   initial begin
-    #(500000 * CLK_PERIOD);
+    #(2000000 * CLK_PERIOD);
     $display("ERROR: Simulation timeout!");
     $finish;
   end

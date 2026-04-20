@@ -51,6 +51,7 @@ module tb_aes_ctrl();
   aes_ctrl dut(
     .clk       (clk),
     .rst       (rst),
+    .key_reset (1'b0),
     .key_in    (key_in),
     .block_in  (block_in),
     .mode      (mode),

@@ -24,6 +24,7 @@
 module aes_ctrl(
     input  wire          clk,
     input  wire          rst,
+    input  wire          key_reset,  // pulse to clear key_expanded flag
     input  wire [127:0]  key_in,
     input  wire [127:0]  block_in,
     input  wire          mode,       // 1=encrypt, 0=decrypt
@@ -93,6 +94,10 @@ module aes_ctrl(
       core_init <= 1'b0;
       core_next <= 1'b0;
       done      <= 1'b0;
+
+      // External key reset — force re-expansion
+      if (key_reset)
+        key_expanded <= 1'b0;
 
       case (state)
         //----------------------------------------------------------

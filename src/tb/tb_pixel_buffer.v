@@ -30,6 +30,7 @@ module tb_pixel_buffer();
   pixel_buffer dut(
     .clk        (clk),
     .rst        (rst),
+    .soft_rst   (1'b0),
     .pixel_in   (pixel_in),
     .pixel_valid(pixel_valid),
     .block_out  (block_out),

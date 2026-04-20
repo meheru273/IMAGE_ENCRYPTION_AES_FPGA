@@ -15,6 +15,7 @@
 module pixel_buffer(
     input  wire         clk,
     input  wire         rst,
+    input  wire         soft_rst,    // resets byte_cnt without full reset
     input  wire [7:0]   pixel_in,
     input  wire         pixel_valid,
     output reg  [127:0] block_out,
@@ -31,7 +32,7 @@ module pixel_buffer(
   // Shift register logic
   //----------------------------------------------------------------
   always @(posedge clk) begin
-    if (rst) begin
+    if (rst || soft_rst) begin
       byte_cnt    <= 4'd0;
       shift_reg   <= 128'd0;
       block_out   <= 128'd0;

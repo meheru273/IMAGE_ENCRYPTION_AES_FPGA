@@ -27,6 +27,10 @@ set_property IOSTANDARD LVCMOS33 [get_ports uart_rx_pin]
 set_property PACKAGE_PIN V17 [get_ports mode_sw]
 set_property IOSTANDARD LVCMOS33 [get_ports mode_sw]
 
+## SW1: mode modifier (0=full image, 1=key-only)
+set_property PACKAGE_PIN V16 [get_ports mode_sw1]
+set_property IOSTANDARD LVCMOS33 [get_ports mode_sw1]
+
 ## ============================================================
 ## Buttons (active-high on Basys 3)
 ## ============================================================

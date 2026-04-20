@@ -1,6 +1,6 @@
 # AES-128 Transparent Memory Encryption on FPGA
 
-A hardware AES-128 image encryption system implemented on the **Digilent Basys 3** (Artix-7 XC7A35T) using Vivado 2023.1. A 128×128 grayscale image is streamed from a PC over UART, encrypted block-by-block using the [secworks AES core](https://github.com/secworks/aes), stored in on-chip BRAM, then decrypted on demand and streamed back.
+A hardware AES-128 image encryption system implemented on the **Digilent Basys 3** (Artix-7 XC7A35T) using Vivado 2023.1. A 128×128 grayscale image is streamed from a PC over UART, encrypted block-by-block using the [secworks AES core](https://github.com/secworks/aes), stored in on-chip BRAM, then decrypted on demand and streamed back. The system supports **4 operation modes** with a dynamically supplied 128-bit key over UART.
 
 ---
 
@@ -9,27 +9,47 @@ A hardware AES-128 image encryption system implemented on the **Digilent Basys 3
 ```
 PC (Python)  ──UART──►  uart_rx.v
                               │
-                       pixel_buffer.v    (16 bytes → 128-bit block)
-                              │
-                       aes_ctrl.v FSM    (drives secworks aes_core)
-                              │
-               ┌──────────────┴──────────────┐
-          [ENCRYPT]                      [DECRYPT]
-               │                              │
-          bram_ctrl.v                   bram_ctrl.v
-          (write cipher)                (read cipher)
-               │                              │
-           BRAM (16 KB)             aes_ctrl.v → uart_tx.v
-                                              │
-                                       PC reconstructs image
+              ┌───── 16-byte key ─────┐
+              │                       │
+              ▼                       ▼
+       user_key_reg            pixel_buffer.v    (16 bytes → 128-bit block)
+              │                       │
+              └───────────┬───────────┘
+                          │
+                   aes_ctrl.v FSM    (drives secworks aes_core)
+                          │
+           ┌──────────────┴──────────────┐
+      [ENCRYPT]                      [DECRYPT]
+           │                              │
+      bram_ctrl.v                   bram_ctrl.v
+      (write cipher)                (read cipher)
+           │                              │
+       BRAM (16 KB)             aes_ctrl.v → uart_tx.v
+                                          │
+                                   PC reconstructs image
 ```
+
+---
+
+## Modes of Operation
+
+The system supports 4 modes selected by two switches (`SW1`, `SW0`) before pressing `btnR`:
+
+| Mode | SW1 | SW0 | Name | Description |
+|------|-----|-----|------|-------------|
+| 1 | 0 | 0 | **Full Encrypt** | Send key + plaintext image → FPGA encrypts → stores ciphertext in BRAM → sends encrypted image back |
+| 2 | 0 | 1 | **Full Decrypt** | Send key + ciphertext image → FPGA stores in BRAM → decrypts → sends plaintext back |
+| 3 | 1 | 0 | **Key-only Retrieve** | Send key only → FPGA verifies key matches the one used during last Mode 1 → if match, sends raw encrypted BRAM contents; if mismatch, sends `0xFF` error byte |
+| 4 | 1 | 1 | **Key-only Decrypt** | Send key only → FPGA decrypts stored BRAM contents with the supplied key → sends plaintext back |
+
+> **All modes** receive a 16-byte AES key over UART first (sent immediately after pressing `btnR`).
 
 ---
 
 ## File Structure
 
 ```
-aes-master/
+aes-image/
 ├── src/
 │   ├── rtl/
 │   │   ├── aes.v                  # secworks — existing
@@ -39,24 +59,24 @@ aes-master/
 │   │   ├── aes_key_mem.v          # secworks — existing
 │   │   ├── aes_sbox.v             # secworks — existing
 │   │   ├── aes_inv_sbox.v         # secworks — existing
-│   │   ├── uart_rx.v              # NEW — UART receiver
-│   │   ├── uart_tx.v              # NEW — UART transmitter
-│   │   ├── pixel_buffer.v         # NEW — 16-byte → 128-bit assembler
-│   │   ├── bram_ctrl.v            # NEW — 1024×128-bit BRAM wrapper
-│   │   ├── aes_ctrl.v             # NEW — AES FSM controller
-│   │   └── top.v                  # NEW — top-level integration
+│   │   ├── uart_rx.v              # UART receiver
+│   │   ├── uart_tx.v              # UART transmitter
+│   │   ├── pixel_buffer.v         # 16-byte → 128-bit assembler
+│   │   ├── bram_ctrl.v            # 1024×128-bit BRAM wrapper
+│   │   ├── aes_ctrl.v             # AES FSM controller
+│   │   └── top.v                  # Top-level integration (4-mode FSM)
 │   └── tb/
 │       ├── tb_aes.v               # secworks — existing
-│       ├── tb_uart_rx.v           # NEW
-│       ├── tb_uart_tx.v           # NEW
-│       ├── tb_pixel_buffer.v      # NEW
-│       ├── tb_bram_ctrl.v         # NEW
-│       ├── tb_aes_ctrl.v          # NEW
-│       └── tb_top.v               # NEW — end-to-end simulation
+│       ├── tb_uart_rx.v           # UART RX testbench
+│       ├── tb_uart_tx.v           # UART TX testbench
+│       ├── tb_pixel_buffer.v      # Pixel buffer testbench
+│       ├── tb_bram_ctrl.v         # BRAM controller testbench
+│       ├── tb_aes_ctrl.v          # AES controller testbench
+│       └── tb_top.v               # End-to-end 4-mode simulation
 ├── constraints/
 │   └── basys3.xdc                 # Basys 3 pin assignments
 └── host/
-    └── uart_host.py               # Python PC-side client
+    └── uart_host.py               # Python PC-side client (4-mode)
 ```
 
 ---
@@ -66,11 +86,11 @@ aes-master/
 | Parameter         | Value                        |
 |-------------------|------------------------------|
 | Board             | Digilent Basys 3             |
-| FPGA              | Artix-7 XC7A35T-1CPG236C     |
+| FPGA              | Artix-7 XC7A35T-1CPG236C    |
 | Tool              | Vivado 2023.1                |
 | Clock             | 100 MHz                      |
 | UART baud rate    | 115200 (8N1)                 |
-| AES key size      | 128-bit                      |
+| AES key size      | 128-bit (supplied over UART) |
 | Image size        | 128 × 128 pixels (grayscale) |
 | Total data        | 16384 bytes (16 KB)          |
 | AES blocks        | 1024 blocks × 128 bits       |
@@ -80,18 +100,19 @@ aes-master/
 
 ## Board Interface
 
-| Signal   | Pin  | Description               |
-|----------|------|---------------------------|
-| `clk`    | W5   | 100 MHz system clock      |
-| `uart_tx_pin` | A18 | UART TX to PC        |
-| `uart_rx_pin` | B18 | UART RX from PC      |
-| `rst_btn` | U18 | btnC — active-high reset  |
-| `btn_start` | T17 | btnR — trigger decrypt  |
-| `mode_sw` | V17 | SW0: 0=encrypt, 1=decrypt |
-| `status_led[0]` | U16 | Encrypting      |
-| `status_led[1]` | E19 | Decrypting      |
-| `status_led[2]` | U19 | Done            |
-| `status_led[3]` | V19 | Error           |
+| Signal   | Pin  | Description                               |
+|----------|------|-------------------------------------------|
+| `clk`    | W5   | 100 MHz system clock                      |
+| `uart_tx_pin` | A18 | UART TX to PC                        |
+| `uart_rx_pin` | B18 | UART RX from PC                      |
+| `rst_btn` | U18 | btnC — active-high reset                  |
+| `btn_start` | T17 | btnR — trigger operation (starts key RX) |
+| `mode_sw` | V17 | SW0: 0=encrypt, 1=decrypt                |
+| `mode_sw1` | V16 | SW1: 0=full image, 1=key-only           |
+| `status_led[0]` | U16 | LED0 — Encrypting               |
+| `status_led[1]` | E19 | LED1 — Decrypting               |
+| `status_led[2]` | U19 | LED2 — Done                     |
+| `status_led[3]` | V19 | LED3 — Error (key mismatch)     |
 
 ---
 
@@ -104,7 +125,7 @@ Deserialises UART serial data at 115200 baud into 8-bit bytes. Uses a double-flo
 Serialises 8-bit bytes onto the UART TX line. Asserts `ready` when idle. Generates start bit, 8 data bits (LSB first), and stop bit.
 
 ### `pixel_buffer.v`
-Accumulates 16 incoming bytes into a 128-bit shift register (MSB-first). Asserts `block_valid` for one cycle when 16 bytes have been received.
+Accumulates 16 incoming bytes into a 128-bit shift register (MSB-first). Asserts `block_valid` for one cycle when 16 bytes have been received. Includes a `soft_rst` input to clear state between mode transitions without a full system reset.
 
 ### `bram_ctrl.v`
 A simple synchronous BRAM wrapper inferred by Vivado as BRAM36 primitives. 1024 entries × 128 bits (16 KB total). Separate write and read enable signals.
@@ -115,12 +136,14 @@ The critical FSM that drives the secworks `aes_core` directly (not via the `aes.
 2. Assert `next` → wait for `ready` to go low then high (block processed)
 3. Read `result` on `done` pulse
 
-Key expansion runs **once** per session (tracked by `key_expanded` flag). Subsequent blocks skip directly to block processing.
+Key expansion runs **once** per session (tracked by `key_expanded` flag). A `key_reset` input allows forcing re-expansion when a new key is supplied.
 
 ### `top.v`
-Top-level system FSM:
-- **Encrypt mode** (`SW0=0`): receives UART bytes → pixel buffer → AES encrypt → BRAM write
-- **Decrypt mode** (`SW0=1`): press `btnR` → BRAM read → AES decrypt → UART transmit
+Top-level system FSM with 15 states supporting 4 operation modes. All modes begin with 16-byte key reception over UART, then branch based on latched `{SW1, SW0}`:
+- **Mode 1 (00)**: `DISPATCH` → `ENCRYPT_RX` → `ENCRYPT_WAIT` → `ENCRYPT_STORE` → `BRAM_STREAM` → `BRAM_STREAM_TX` → `DONE`
+- **Mode 2 (01)**: `DISPATCH` → `CIPHER_RX` → `DECRYPT_READ` → `DECRYPT_WAIT` → `DECRYPT_TX` → `DONE`
+- **Mode 3 (10)**: `DISPATCH` → `KEY_VERIFY` → `BRAM_STREAM`/`ERROR` → `DONE`
+- **Mode 4 (11)**: `DISPATCH` → `DECRYPT_READ` → `DECRYPT_WAIT` → `DECRYPT_TX` → `DONE`
 
 ---
 
@@ -142,9 +165,37 @@ Top-level system FSM:
 
 ---
 
-## Simulation
+## Prerequisites
 
-Run testbenches individually with [Icarus Verilog](http://iverilog.icarus.com/) (free, available on Windows):
+### Python Dependencies
+
+```bash
+pip install pyserial opencv-python numpy
+```
+
+### Icarus Verilog (for simulation)
+
+Download from [http://iverilog.icarus.com/](http://iverilog.icarus.com/) or install via package manager.
+
+---
+
+## Vivado Project Setup
+
+1. Open Vivado 2023.1 → **Create New Project**
+2. Add all files from `src/rtl/` as Design Sources
+3. Add all files from `src/tb/` as Simulation Sources
+4. Add `constraints/basys3.xdc` as Constraints
+5. Set **Top Module** to `top`
+6. Run **Synthesis → Implementation → Generate Bitstream**
+7. Open Hardware Manager, connect Basys 3, program device
+
+> **Timing**: The secworks S-Box is pipelined. Expect ~3 ns slack at 100 MHz on Artix-7. If WNS is negative, reduce clock to 50 MHz by changing the XDC `create_clock -period` to `20.000`.
+
+---
+
+## Simulation (Icarus Verilog)
+
+Run testbenches individually:
 
 ```bash
 # 1. UART Receiver
@@ -170,7 +221,7 @@ iverilog -o sim.vvp \
   src/rtl/aes_key_mem.v src/rtl/aes_sbox.v src/rtl/aes_inv_sbox.v
 vvp sim.vvp
 
-# 6. End-to-end top-level
+# 6. End-to-end top-level (all 4 modes)
 iverilog -o sim.vvp \
   src/tb/tb_top.v src/rtl/top.v src/rtl/aes_ctrl.v \
   src/rtl/uart_rx.v src/rtl/uart_tx.v src/rtl/pixel_buffer.v \
@@ -182,72 +233,177 @@ vvp sim.vvp
 
 All testbenches print `*** ALL TESTS PASSED ***` on success.
 
+The `tb_top.v` testbench runs 4 phases:
+1. **Phase 1** — Mode 1 (Full Encrypt): sends key + 16 plaintext bytes, verifies non-zero ciphertext output
+2. **Phase 2** — Mode 3 (Retrieve, correct key): sends same key, verifies BRAM contents match Phase 1
+3. **Phase 3** — Mode 3 (Retrieve, wrong key): sends a different key, verifies `0xFF` error response
+4. **Phase 4** — Mode 4 (Key-only Decrypt): sends original key, verifies plaintext recovery matches Phase 1 input
+
 ---
 
-## Python Host Script
+## Testing All 4 Modes on FPGA
 
-Install dependencies:
+### Step 0 — Setup
+
+1. Program the bitstream to the Basys 3 board via Vivado Hardware Manager
+2. Identify the COM port: open **Windows Device Manager → Ports (COM & LPT)** and note the Basys 3 USB-UART bridge port (e.g., `COM3`)
+3. Press **btnC** (center button) to reset the FPGA — all LEDs should turn off
+
+### Step 1 — Mode 1: Full Encrypt (SW1=0, SW0=0)
+
+This mode sends the AES key and a plaintext image to the FPGA. The FPGA encrypts the image, stores the ciphertext in BRAM, saves the key internally, and streams the encrypted image back to the PC.
+
+1. Set **SW0 = DOWN** (off) and **SW1 = DOWN** (off)
+2. Press **btnR** (right button) on the board — this arms the FPGA to receive a key
+3. Immediately run the Python script:
 
 ```bash
-pip install pyserial opencv-python numpy
+python host/uart_host.py --mode encrypt --port COM3 --image input.png \
+  --key 2b7e151628aed2a6abf7158809cf4f3c
 ```
 
-### Encrypt (PC → FPGA)
+4. **Watch the LEDs**:
+   - LED0 lights up → encryption in progress
+   - LED2 lights up → encryption complete, streaming encrypted data back
+5. The script saves the encrypted image as `encrypted.png` (should look like random noise)
+6. The FPGA now holds the encrypted image in BRAM and remembers the key
+
+> **Note**: The `--encrypted_output` flag allows specifying a different output filename (default: `encrypted.png`).
+
+### Step 2 — Mode 2: Full Decrypt (SW1=0, SW0=1)
+
+This mode sends the AES key and an encrypted image file from disk. The FPGA stores the ciphertext in BRAM, decrypts it block-by-block, and streams the plaintext back. Useful for decrypting an encrypted image file you received elsewhere.
+
+1. Press **btnC** to reset the FPGA
+2. Set **SW0 = UP** (on) and **SW1 = DOWN** (off)
+3. Press **btnR** on the board
+4. Run:
 
 ```bash
-# Set SW0 = 0 (encrypt mode), then run:
-python host/uart_host.py --mode encrypt --port COM3 --image input.png
+python host/uart_host.py --mode decrypt --port COM3 \
+  --input encrypted.png --key 2b7e151628aed2a6abf7158809cf4f3c \
+  --output decrypted_mode2.png
 ```
 
-Sends 16384 raw grayscale bytes. FPGA encrypts each 16-byte block and stores ciphertext in BRAM. LED0 lights up during encryption; LED2 when done.
+5. **Watch the LEDs**:
+   - LED1 lights up → receiving ciphertext / decrypting
+   - LED2 lights up → done, data sent back
+6. Compare `decrypted_mode2.png` with `input.png` — they should be identical
 
-### Decrypt (FPGA → PC)
+### Step 3 — Mode 3: Key-only Retrieve (SW1=1, SW0=0)
+
+This mode verifies the supplied key matches the key used during the last Mode 1 encryption. If the key matches, the FPGA streams the raw encrypted BRAM contents (ciphertext) back. If the key doesn't match, the FPGA sends a single `0xFF` error byte.
+
+**Prerequisite**: You must have run Mode 1 at least once (so the FPGA has a stored key and encrypted data in BRAM). Do **NOT** reset the FPGA between Mode 1 and Mode 3.
+
+#### Test with correct key:
+
+1. Set **SW0 = DOWN** (off) and **SW1 = UP** (on)
+2. Press **btnR** on the board
+3. Run:
 
 ```bash
-# Set SW0 = 1 (decrypt mode), press btnR on board, then run:
-python host/uart_host.py --mode decrypt --port COM3 --output decrypted.png
+python host/uart_host.py --mode retrieve --port COM3 \
+  --key 2b7e151628aed2a6abf7158809cf4f3c --output retrieved.png
 ```
 
-FPGA streams 16384 decrypted bytes. Script reconstructs and saves the image.
+4. **Watch the LEDs**:
+   - LED2 lights up → key verified, streaming encrypted data
+5. `retrieved.png` should match `encrypted.png` from Mode 1
 
-> **COM port**: check Windows Device Manager → Ports (COM & LPT) for the Basys 3 USB-UART bridge.
+#### Test with wrong key:
 
----
+1. Press **btnC** to reset, then re-run Mode 1 with the original key first
+2. Set **SW0 = DOWN** (off) and **SW1 = UP** (on)
+3. Press **btnR** on the board
+4. Run with a **different key**:
 
-## Vivado Project Setup
-
-1. Open Vivado 2023.1 → **Create New Project**
-2. Add all files from `src/rtl/` as Design Sources
-3. Add all files from `src/tb/` as Simulation Sources
-4. Add `constraints/basys3.xdc` as Constraints
-5. Set **Top Module** to `top`
-6. Run **Synthesis → Implementation → Generate Bitstream**
-7. Open Hardware Manager, connect Basys 3, program device
-
-> **Timing**: The secworks S-Box is pipelined. Expect ~3 ns slack at 100 MHz on Artix-7. If WNS is negative, reduce clock to 50 MHz by changing the XDC `create_clock -period` to `20.000`.
-
----
-
-## Demo Flow
-
-1. Program bitstream to Basys 3
-2. Open terminal: `python host/uart_host.py --mode encrypt --port COM3 --image photo.png`
-3. Watch LED0 blink as 1024 blocks are encrypted — LED2 lights when done
-4. Flip SW0 up, press btnR on the board
-5. Run: `python host/uart_host.py --mode decrypt --port COM3 --output result.png`
-6. Compare `photo.png` and `result.png` — they should be identical
-
----
-
-## AES Key
-
-The demo uses NIST standard key `2b7e151628aed2a6abf7158809cf4f3c` hardcoded in `top.v`:
-
-```verilog
-localparam [127:0] AES_KEY = 128'h2b7e151628aed2a6abf7158809cf4f3c;
+```bash
+python host/uart_host.py --mode retrieve --port COM3 \
+  --key 00112233445566778899aabbccddeeff --output should_fail.png
 ```
 
-Change this for any real deployment.
+5. **Watch the LEDs**:
+   - LED3 lights up → key mismatch error
+6. The script prints: `Key mismatch — access denied (received 0xFF)`
+
+### Step 4 — Mode 4: Key-only Decrypt (SW1=1, SW0=1)
+
+This mode decrypts the data already stored in BRAM using the supplied key, without sending any image data. The FPGA reads each block from BRAM, runs AES decryption, and streams the plaintext back.
+
+**Prerequisite**: BRAM must contain encrypted data from a previous Mode 1 or Mode 2 operation. Do **NOT** reset the FPGA between the encrypt and this step.
+
+1. Set **SW0 = UP** (on) and **SW1 = UP** (on)
+2. Press **btnR** on the board
+3. Run:
+
+```bash
+python host/uart_host.py --mode decrypt_stored --port COM3 \
+  --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted_mode4.png
+```
+
+4. **Watch the LEDs**:
+   - LED1 lights up → decryption in progress
+   - LED2 lights up → done
+5. Compare `decrypted_mode4.png` with `input.png` — they should be identical
+
+---
+
+## Complete End-to-End Test Sequence
+
+Run all 4 modes in sequence to fully verify the system. **Do not press btnC (reset) between steps** — the BRAM and stored key must persist across modes.
+
+```bash
+# ─── Step 1: Mode 1 — Encrypt ───────────────────────────────────────
+# Switches: SW0=DOWN, SW1=DOWN → press btnR
+python host/uart_host.py --mode encrypt --port COM3 --image input.png \
+  --key 2b7e151628aed2a6abf7158809cf4f3c --encrypted_output encrypted.png
+
+# ─── Step 2: Mode 3 — Retrieve with correct key ─────────────────────
+# Switches: SW0=DOWN, SW1=UP → press btnR
+python host/uart_host.py --mode retrieve --port COM3 \
+  --key 2b7e151628aed2a6abf7158809cf4f3c --output retrieved.png
+
+# ─── Step 3: Mode 3 — Retrieve with wrong key (should fail) ─────────
+# Switches: SW0=DOWN, SW1=UP → press btnR
+python host/uart_host.py --mode retrieve --port COM3 \
+  --key 00112233445566778899aabbccddeeff --output should_fail.png
+
+# ─── Step 4: Mode 4 — Decrypt stored data ───────────────────────────
+# Switches: SW0=UP, SW1=UP → press btnR
+python host/uart_host.py --mode decrypt_stored --port COM3 \
+  --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted.png
+
+# ─── Step 5: Mode 2 — Full decrypt from file ────────────────────────
+# Press btnC to reset first, then:
+# Switches: SW0=UP, SW1=DOWN → press btnR
+python host/uart_host.py --mode decrypt --port COM3 \
+  --input encrypted.png --key 2b7e151628aed2a6abf7158809cf4f3c \
+  --output decrypted_mode2.png
+```
+
+### Expected Results
+
+| Step | Mode | Expected LED | Expected Output |
+|------|------|-------------|-----------------|
+| 1 | Mode 1 (Encrypt) | LED0 → LED2 | `encrypted.png` — random noise |
+| 2 | Mode 3 (Retrieve ✓) | LED2 | `retrieved.png` — matches `encrypted.png` |
+| 3 | Mode 3 (Retrieve ✗) | LED3 | Script prints "access denied" |
+| 4 | Mode 4 (Decrypt stored) | LED1 → LED2 | `decrypted.png` — matches `input.png` |
+| 5 | Mode 2 (Full decrypt) | LED1 → LED2 | `decrypted_mode2.png` — matches `input.png` |
+
+---
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| No LEDs light after btnR | FPGA not programmed or wrong bitstream | Re-program via Vivado Hardware Manager |
+| Script times out waiting for data | btnR not pressed before running script | Press btnR **first**, then run the Python script within a few seconds |
+| Garbled/corrupted output image | Wrong COM port or baud rate mismatch | Verify COM port in Device Manager; ensure 115200 baud |
+| LED3 lights up unexpectedly | Key mismatch in Mode 3 | Ensure you use the exact same key as the Mode 1 encrypt session |
+| Mode 4 output doesn't match original | BRAM was cleared by a reset | Do **not** press btnC between Mode 1 and Mode 4 |
+| `encrypted.png` is all zeros | Image not sent or encryption failed | Check that `input.png` exists and is readable |
 
 ---
 
