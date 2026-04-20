@@ -243,6 +243,8 @@ The `tb_top.v` testbench runs 4 phases:
 
 ## Testing All 4 Modes on FPGA
 
+> **How it works**: The Python script opens the serial port first, then prompts you to set the switches and press btnR on the board. This ensures proper synchronization — just follow the on-screen prompts.
+
 ### Step 0 — Setup
 
 1. Program the bitstream to the Basys 3 board via Vivado Hardware Manager
@@ -253,133 +255,108 @@ The `tb_top.v` testbench runs 4 phases:
 
 This mode sends the AES key and a plaintext image to the FPGA. The FPGA encrypts the image, stores the ciphertext in BRAM, saves the key internally, and streams the encrypted image back to the PC.
 
-1. Set **SW0 = DOWN** (off) and **SW1 = DOWN** (off)
-2. Press **btnR** (right button) on the board — this arms the FPGA to receive a key
-3. Immediately run the Python script:
+1. Run the Python script (put everything on **one line** in PowerShell):
 
-```bash
-python host/uart_host.py --mode encrypt --port COM3 --image input.png \
-  --key 2b7e151628aed2a6abf7158809cf4f3c
+```powershell
+python host/uart_host.py --mode encrypt --port COM3 --image input.png --key 2b7e151628aed2a6abf7158809cf4f3c
 ```
 
-4. **Watch the LEDs**:
+2. The script will prompt you:
+   - Set **SW0 = DOWN**, **SW1 = DOWN**
+   - Press **btnR** on the board
+   - Press **Enter** in the terminal
+3. **Watch the LEDs**:
    - LED0 lights up → encryption in progress
    - LED2 lights up → encryption complete, streaming encrypted data back
-5. The script saves the encrypted image as `encrypted.png` (should look like random noise)
-6. The FPGA now holds the encrypted image in BRAM and remembers the key
+4. The script saves the encrypted image as `encrypted.png` (should look like random noise)
+5. The FPGA now holds the encrypted image in BRAM and remembers the key
 
-> **Note**: The `--encrypted_output` flag allows specifying a different output filename (default: `encrypted.png`).
+> **Note**: Use `--encrypted_output filename.png` to specify a different output filename.
 
 ### Step 2 — Mode 2: Full Decrypt (SW1=0, SW0=1)
 
-This mode sends the AES key and an encrypted image file from disk. The FPGA stores the ciphertext in BRAM, decrypts it block-by-block, and streams the plaintext back. Useful for decrypting an encrypted image file you received elsewhere.
+This mode sends the AES key and an encrypted image file from disk. The FPGA stores the ciphertext in BRAM, decrypts it block-by-block, and streams the plaintext back.
+
+> **⚠️ Warning**: Pressing **btnC** clears the stored encryption key from Mode 1. If you plan to test Mode 3 (retrieve) or Mode 4 (decrypt stored), run those **before** Mode 2. The recommended order is: Mode 1 → Mode 3 → Mode 4 → btnC → Mode 2.
 
 1. Press **btnC** to reset the FPGA
-2. Set **SW0 = UP** (on) and **SW1 = DOWN** (off)
-3. Press **btnR** on the board
-4. Run:
+2. Run:
 
-```bash
-python host/uart_host.py --mode decrypt --port COM3 \
-  --input encrypted.png --key 2b7e151628aed2a6abf7158809cf4f3c \
-  --output decrypted_mode2.png
+```powershell
+python host/uart_host.py --mode decrypt --port COM3 --input encrypted.png --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted_mode2.png
 ```
 
-5. **Watch the LEDs**:
+3. Follow the on-screen prompt: set **SW0 = UP**, **SW1 = DOWN**, press **btnR**, then **Enter**
+4. **Watch the LEDs**:
    - LED1 lights up → receiving ciphertext / decrypting
-   - LED2 lights up → done, data sent back
-6. Compare `decrypted_mode2.png` with `input.png` — they should be identical
+   - LED2 lights up → done
+5. Compare `decrypted_mode2.png` with `input.png` — they should be identical
 
 ### Step 3 — Mode 3: Key-only Retrieve (SW1=1, SW0=0)
 
-This mode verifies the supplied key matches the key used during the last Mode 1 encryption. If the key matches, the FPGA streams the raw encrypted BRAM contents (ciphertext) back. If the key doesn't match, the FPGA sends a single `0xFF` error byte.
+This mode verifies the supplied key matches the key used during the last Mode 1 encryption. If the key matches, the FPGA streams the raw encrypted BRAM contents back. If the key doesn't match, the FPGA sends a single `0xFF` error byte.
 
 **Prerequisite**: You must have run Mode 1 at least once (so the FPGA has a stored key and encrypted data in BRAM). Do **NOT** reset the FPGA between Mode 1 and Mode 3.
 
 #### Test with correct key:
 
-1. Set **SW0 = DOWN** (off) and **SW1 = UP** (on)
-2. Press **btnR** on the board
-3. Run:
-
-```bash
-python host/uart_host.py --mode retrieve --port COM3 \
-  --key 2b7e151628aed2a6abf7158809cf4f3c --output retrieved.png
+```powershell
+python host/uart_host.py --mode retrieve --port COM3 --key 2b7e151628aed2a6abf7158809cf4f3c --output retrieved.png
 ```
 
-4. **Watch the LEDs**:
-   - LED2 lights up → key verified, streaming encrypted data
-5. `retrieved.png` should match `encrypted.png` from Mode 1
+Follow the prompt: set **SW0 = DOWN**, **SW1 = UP**, press **btnR**, then **Enter**.
+
+- LED2 lights up → key verified, streaming encrypted data
+- `retrieved.png` should match `encrypted.png` from Mode 1
 
 #### Test with wrong key:
 
-1. Press **btnC** to reset, then re-run Mode 1 with the original key first
-2. Set **SW0 = DOWN** (off) and **SW1 = UP** (on)
-3. Press **btnR** on the board
-4. Run with a **different key**:
-
-```bash
-python host/uart_host.py --mode retrieve --port COM3 \
-  --key 00112233445566778899aabbccddeeff --output should_fail.png
+```powershell
+python host/uart_host.py --mode retrieve --port COM3 --key 00112233445566778899aabbccddeeff --output should_fail.png
 ```
 
-5. **Watch the LEDs**:
-   - LED3 lights up → key mismatch error
-6. The script prints: `Key mismatch — access denied (received 0xFF)`
+Follow the prompt: set **SW0 = DOWN**, **SW1 = UP**, press **btnR**, then **Enter**.
+
+- LED3 lights up → key mismatch error
+- The script prints: `Key mismatch — access denied (received 0xFF)`
 
 ### Step 4 — Mode 4: Key-only Decrypt (SW1=1, SW0=1)
 
-This mode decrypts the data already stored in BRAM using the supplied key, without sending any image data. The FPGA reads each block from BRAM, runs AES decryption, and streams the plaintext back.
+This mode decrypts the data already stored in BRAM using the supplied key, without sending any image data.
 
 **Prerequisite**: BRAM must contain encrypted data from a previous Mode 1 or Mode 2 operation. Do **NOT** reset the FPGA between the encrypt and this step.
 
-1. Set **SW0 = UP** (on) and **SW1 = UP** (on)
-2. Press **btnR** on the board
-3. Run:
-
-```bash
-python host/uart_host.py --mode decrypt_stored --port COM3 \
-  --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted_mode4.png
+```powershell
+python host/uart_host.py --mode decrypt_stored --port COM3 --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted_mode4.png
 ```
 
-4. **Watch the LEDs**:
-   - LED1 lights up → decryption in progress
-   - LED2 lights up → done
-5. Compare `decrypted_mode4.png` with `input.png` — they should be identical
+Follow the prompt: set **SW0 = UP**, **SW1 = UP**, press **btnR**, then **Enter**.
+
+- LED1 lights up → decryption in progress
+- LED2 lights up → done
+- Compare `decrypted_mode4.png` with `input.png` — they should be identical
 
 ---
 
 ## Complete End-to-End Test Sequence
 
-Run all 4 modes in sequence to fully verify the system. **Do not press btnC (reset) between steps** — the BRAM and stored key must persist across modes.
+Run all 4 modes in sequence. Each script will prompt you for the switch/button actions. **Do not press btnC (reset) between steps** — the BRAM and stored key must persist across modes.
 
-```bash
-# ─── Step 1: Mode 1 — Encrypt ───────────────────────────────────────
-# Switches: SW0=DOWN, SW1=DOWN → press btnR
-python host/uart_host.py --mode encrypt --port COM3 --image input.png \
-  --key 2b7e151628aed2a6abf7158809cf4f3c --encrypted_output encrypted.png
+```powershell
+# Step 1: Mode 1 — Encrypt (script prompts: SW0=DOWN, SW1=DOWN, btnR)
+python host/uart_host.py --mode encrypt --port COM3 --image input.png --key 2b7e151628aed2a6abf7158809cf4f3c --encrypted_output encrypted.png
 
-# ─── Step 2: Mode 3 — Retrieve with correct key ─────────────────────
-# Switches: SW0=DOWN, SW1=UP → press btnR
-python host/uart_host.py --mode retrieve --port COM3 \
-  --key 2b7e151628aed2a6abf7158809cf4f3c --output retrieved.png
+# Step 2: Mode 3 — Retrieve with correct key (script prompts: SW0=DOWN, SW1=UP, btnR)
+python host/uart_host.py --mode retrieve --port COM3 --key 2b7e151628aed2a6abf7158809cf4f3c --output retrieved.png
 
-# ─── Step 3: Mode 3 — Retrieve with wrong key (should fail) ─────────
-# Switches: SW0=DOWN, SW1=UP → press btnR
-python host/uart_host.py --mode retrieve --port COM3 \
-  --key 00112233445566778899aabbccddeeff --output should_fail.png
+# Step 3: Mode 3 — Retrieve with wrong key (should fail)
+python host/uart_host.py --mode retrieve --port COM3 --key 00112233445566778899aabbccddeeff --output should_fail.png
 
-# ─── Step 4: Mode 4 — Decrypt stored data ───────────────────────────
-# Switches: SW0=UP, SW1=UP → press btnR
-python host/uart_host.py --mode decrypt_stored --port COM3 \
-  --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted.png
+# Step 4: Mode 4 — Decrypt stored data (script prompts: SW0=UP, SW1=UP, btnR)
+python host/uart_host.py --mode decrypt_stored --port COM3 --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted.png
 
-# ─── Step 5: Mode 2 — Full decrypt from file ────────────────────────
-# Press btnC to reset first, then:
-# Switches: SW0=UP, SW1=DOWN → press btnR
-python host/uart_host.py --mode decrypt --port COM3 \
-  --input encrypted.png --key 2b7e151628aed2a6abf7158809cf4f3c \
-  --output decrypted_mode2.png
+# Step 5: Mode 2 — Full decrypt from file (press btnC to reset first!)
+python host/uart_host.py --mode decrypt --port COM3 --input encrypted.png --key 2b7e151628aed2a6abf7158809cf4f3c --output decrypted_mode2.png
 ```
 
 ### Expected Results
@@ -399,11 +376,12 @@ python host/uart_host.py --mode decrypt --port COM3 \
 | Symptom | Cause | Fix |
 |---------|-------|-----|
 | No LEDs light after btnR | FPGA not programmed or wrong bitstream | Re-program via Vivado Hardware Manager |
-| Script times out waiting for data | btnR not pressed before running script | Press btnR **first**, then run the Python script within a few seconds |
+| Script times out waiting for data | btnR not pressed or pressed too late | Follow the script's on-screen prompt: set switches → press btnR → press Enter |
 | Garbled/corrupted output image | Wrong COM port or baud rate mismatch | Verify COM port in Device Manager; ensure 115200 baud |
 | LED3 lights up unexpectedly | Key mismatch in Mode 3 | Ensure you use the exact same key as the Mode 1 encrypt session |
 | Mode 4 output doesn't match original | BRAM was cleared by a reset | Do **not** press btnC between Mode 1 and Mode 4 |
 | `encrypted.png` is all zeros | Image not sent or encryption failed | Check that `input.png` exists and is readable |
+| PowerShell rejects `\` line breaks | PowerShell uses backtick for continuation | Put the entire command on one line, or use `` ` `` instead of `\` |
 
 ---
 
