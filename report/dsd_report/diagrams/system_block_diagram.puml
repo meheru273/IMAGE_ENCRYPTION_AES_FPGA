@@ -1,0 +1,81 @@
+@startuml system_block_diagram
+title Top-Level System Block Diagram — Data Flow
+
+skinparam backgroundColor #FEFEFE
+skinparam component {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+  FontSize 11
+}
+skinparam rectangle {
+  BackgroundColor #FFF9C4
+  BorderColor #F9A825
+}
+skinparam node {
+  BackgroundColor #F3E5F5
+  BorderColor #7B1FA2
+}
+
+' External entities
+node "PC\n(Python Script)" as PC_TX
+node "PC\n(Python Script)" as PC_RX
+
+' FPGA boundary
+rectangle "Basys 3 FPGA (Artix-7 XC7A35T)" {
+
+  component "uart_rx\n(Deserialiser)" as UART_RX #BBDEFB
+  component "uart_tx\n(Serialiser)" as UART_TX #BBDEFB
+
+  component "pixel_buffer\n(16B → 128b)" as PBUF #C8E6C9
+
+  component "top.v FSM\n(15-state\nsystem controller)" as TOP #FFE0B2
+
+  component "aes_ctrl\n(8-state\nhandshake FSM)" as AES_CTRL #FFCCBC
+
+  component "aes_core" as AES_CORE #FFCCBC {
+    component "aes_encipher_block\n(SubBytes, ShiftRows\nMixColumns, AddRoundKey)" as ENC
+    component "aes_decipher_block\n(InvSubBytes, InvShiftRows\nInvMixColumns, AddRoundKey)" as DEC
+    component "aes_key_mem\n(Key Expansion)" as KEYMEM
+    component "aes_sbox / aes_inv_sbox\n(S-Box Lookup Tables)" as SBOX
+  }
+
+  component "bram_ctrl\n(1024 × 128-bit\n= 16 KB)" as BRAM #C8E6C9
+  
+  component "Byte Extractor\n[(15-idx)*8 +: 8]" as BYTEEXT #E1BEE7
+
+  ' Key registers
+  component "user_key_reg\n(128-bit)" as KEYREG #FFECB3
+  component "stored_key_reg\n(128-bit)" as STOREDKEY #FFECB3
+}
+
+' Data flow
+PC_TX --> UART_RX : serial\n115200 baud
+UART_RX --> TOP : rx_data[7:0]\nrx_valid
+TOP --> KEYREG : key bytes\n(first 16)
+UART_RX --> PBUF : rx_data[7:0]
+TOP --> PBUF : pbuf_pixel_valid
+PBUF --> TOP : pbuf_block[127:0]\npbuf_valid
+
+TOP --> AES_CTRL : block_in, mode\nstart, key_reset
+KEYREG --> AES_CTRL : key_in[127:0]
+AES_CTRL --> AES_CORE : init, next\nencdec, key, block
+AES_CORE --> AES_CTRL : result, ready\nresult_valid
+AES_CTRL --> TOP : block_out[127:0]\ndone
+
+TOP --> BRAM : addr, din\nwr_en, rd_en
+BRAM --> TOP : dout[127:0]
+
+TOP --> BYTEEXT : decrypt_result\nor stream_block
+BYTEEXT --> UART_TX : tx_data[7:0]
+TOP --> UART_TX : tx_send
+UART_TX --> PC_RX : serial\n115200 baud
+
+' Key verify path
+KEYREG ..> STOREDKEY : save on\nMode 1 done
+STOREDKEY ..> TOP : compare in\nMode 3
+
+' Control from TOP
+TOP --> BRAM : control
+TOP --> PBUF : soft_rst
+
+@enduml

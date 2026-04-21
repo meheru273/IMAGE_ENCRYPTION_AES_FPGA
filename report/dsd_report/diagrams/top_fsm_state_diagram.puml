@@ -1,0 +1,84 @@
+@startuml top_fsm_state_diagram
+title Top-Level System FSM — State Transition Diagram (15 States)
+
+skinparam backgroundColor #FEFEFE
+skinparam state {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+  ArrowColor #37474F
+  FontSize 11
+}
+
+[*] --> SYS_IDLE
+
+state "SYS_IDLE\n(S0)" as SYS_IDLE #E8F5E9 : Waiting for btnR\nAll LEDs OFF
+state "SYS_KEY_RX\n(S1)" as SYS_KEY_RX #FFF9C4 : Receive 16 key\nbytes over UART
+state "SYS_DISPATCH\n(S2)" as SYS_DISPATCH #FFF9C4 : Branch on\n{SW1, SW0}
+
+state "Mode 1: Full Encrypt" as mode1 {
+  state "SYS_ENCRYPT_RX\n(S3)" as SYS_ENCRYPT_RX #BBDEFB : Wait for\npixel_buffer\nblock_valid
+  state "SYS_ENCRYPT_WAIT\n(S4)" as SYS_ENCRYPT_WAIT #BBDEFB : AES encrypting\nwait aes_done
+  state "SYS_ENCRYPT_STORE\n(S5)" as SYS_ENCRYPT_STORE #BBDEFB : Write ciphertext\nto BRAM
+}
+
+state "BRAM Stream (Mode 1 + 3)" as stream {
+  state "SYS_BRAM_STREAM\n(S6)" as SYS_BRAM_STREAM #C8E6C9 : Read BRAM block
+  state "SYS_BRAM_STREAM_TX\n(S7)" as SYS_BRAM_STREAM_TX #C8E6C9 : TX 16 bytes\nof current block
+}
+
+state "Mode 2: Cipher RX" as mode2 {
+  state "SYS_CIPHER_RX\n(S8)" as SYS_CIPHER_RX #E1BEE7 : Receive ciphertext\nwrite to BRAM
+}
+
+state "Decrypt Path (Mode 2 + 4)" as decrypt {
+  state "SYS_DECRYPT_READ\n(S9)" as SYS_DECRYPT_READ #FFCCBC : Read ciphertext\nfrom BRAM
+  state "SYS_DECRYPT_WAIT\n(S10)" as SYS_DECRYPT_WAIT #FFCCBC : AES decrypting\nwait aes_done
+  state "SYS_DECRYPT_TX\n(S11)" as SYS_DECRYPT_TX #FFCCBC : TX 16 decrypted\nbytes
+}
+
+state "Mode 3: Key Verify" as mode3 {
+  state "SYS_KEY_VERIFY\n(S12)" as SYS_KEY_VERIFY #FFECB3 : Compare keys
+  state "SYS_ERROR\n(S13)" as SYS_ERROR #FFCDD2 : Send 0xFF\nLED3 ON
+}
+
+state "SYS_DONE\n(S14)" as SYS_DONE #C8E6C9 : LED2 ON\nReturn to IDLE
+
+' Main transitions
+SYS_IDLE --> SYS_KEY_RX : btnR rising edge
+SYS_KEY_RX --> SYS_DISPATCH : 16 bytes received
+
+' Dispatch branches
+SYS_DISPATCH --> SYS_ENCRYPT_RX : mode = 2'b00
+SYS_DISPATCH --> SYS_CIPHER_RX : mode = 2'b01
+SYS_DISPATCH --> SYS_KEY_VERIFY : mode = 2'b10
+SYS_DISPATCH --> SYS_DECRYPT_READ : mode = 2'b11
+
+' Mode 1 encrypt path
+SYS_ENCRYPT_RX --> SYS_ENCRYPT_WAIT : pbuf_valid
+SYS_ENCRYPT_WAIT --> SYS_ENCRYPT_STORE : aes_done
+SYS_ENCRYPT_STORE --> SYS_ENCRYPT_RX : more blocks
+SYS_ENCRYPT_STORE --> SYS_BRAM_STREAM : all 1024 done
+
+' BRAM stream path
+SYS_BRAM_STREAM --> SYS_BRAM_STREAM_TX : BRAM read done
+SYS_BRAM_STREAM_TX --> SYS_BRAM_STREAM : more blocks
+SYS_BRAM_STREAM_TX --> SYS_DONE : all sent
+
+' Mode 2 cipher RX
+SYS_CIPHER_RX --> SYS_DECRYPT_READ : all 1024 stored
+
+' Decrypt path
+SYS_DECRYPT_READ --> SYS_DECRYPT_WAIT : BRAM read
+SYS_DECRYPT_WAIT --> SYS_DECRYPT_TX : aes_done
+SYS_DECRYPT_TX --> SYS_DECRYPT_READ : more blocks
+SYS_DECRYPT_TX --> SYS_DONE : all sent
+
+' Mode 3 key verify
+SYS_KEY_VERIFY --> SYS_BRAM_STREAM : keys match
+SYS_KEY_VERIFY --> SYS_ERROR : keys mismatch
+SYS_ERROR --> SYS_DONE : 0xFF sent
+
+' Done to IDLE
+SYS_DONE --> SYS_IDLE
+
+@enduml

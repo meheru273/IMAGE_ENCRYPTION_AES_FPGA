@@ -1,0 +1,84 @@
+@startuml register_datapath
+title Register-Transfer Level (RTL) Datapath
+
+skinparam backgroundColor #FEFEFE
+skinparam rectangle {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+}
+
+rectangle "UART RX\n(Deserialiser)" as UARTRX #BBDEFB {
+  rectangle "rx_data[7:0]" as RXD
+  rectangle "rx_valid" as RXV
+}
+
+rectangle "Key Shift Register (128-bit)" as KSR #FFF9C4 {
+  rectangle "key_shift_reg[127:0]" as KSREG
+  rectangle "key_byte_cnt[3:0]" as KBC
+}
+
+rectangle "User Key Register" as UKR #FFECB3 {
+  rectangle "user_key_reg[127:0]" as UKREG
+}
+
+rectangle "Stored Key Register" as SKR #FFECB3 {
+  rectangle "stored_key_reg[127:0]" as SKREG
+}
+
+rectangle "Pixel Buffer" as PB #C8E6C9 {
+  rectangle "shift_reg[127:0]" as PBREG
+  rectangle "byte_cnt[3:0]" as PBCNT
+  rectangle "block_out[127:0]" as PBOUT
+}
+
+rectangle "AES Data Registers" as AESREG #FFCCBC {
+  rectangle "block_reg[127:0]" as BREG
+  rectangle "mode_reg" as MREG
+  rectangle "key_expanded" as KEXP
+}
+
+rectangle "AES Core" as AESCORE #FFCCBC {
+  rectangle "round_key[127:0]" as RKEY
+  rectangle "state[127:0]\n(4×4 byte matrix)" as STATE
+  rectangle "result[127:0]" as RESULT
+}
+
+rectangle "BRAM" as BRAM_M #C8E6C9 {
+  rectangle "mem[0:1023] × 128-bit" as MEM
+  rectangle "addr[9:0]" as ADDR
+}
+
+rectangle "TX Path" as TXP #E1BEE7 {
+  rectangle "decrypt_result[127:0]" as DRES
+  rectangle "tx_byte_idx[3:0]" as TBI
+  rectangle "tx_data[7:0]" as TXD
+}
+
+rectangle "Address Counters" as ADDRC #FFECB3 {
+  rectangle "wr_addr[9:0]" as WA
+  rectangle "rd_addr[9:0]" as RA
+  rectangle "stream_addr[9:0]" as SA
+}
+
+' Register transfer flows
+RXD --> KSREG : key_shift_reg ← {key_shift_reg[119:0], rx_data}
+KSREG --> UKREG : user_key_reg ← {key_shift_reg[119:0], rx_data}\n(when key_byte_cnt == 15)
+UKREG --> SKREG : stored_key_reg ← user_key_reg\n(on Mode 1 completion)
+
+RXD --> PBREG : shift_reg ← {shift_reg[119:0], pixel_in}
+PBOUT --> BREG : block_reg ← pbuf_block\n(on start)
+UKREG --> AESCORE : key_in → key expansion → round_key
+
+BREG --> STATE : AES state ← block_in ⊕ round_key[0]
+STATE --> RESULT : After 10 rounds
+
+RESULT --> MEM : BRAM[wr_addr] ← aes_block_out\n(encrypt)
+MEM --> BREG : block_reg ← BRAM[rd_addr]\n(decrypt)
+RESULT --> DRES : decrypt_result ← aes_block_out
+
+DRES --> TXD : tx_data ← decrypt_result[(15-idx)*8 +: 8]
+
+WA --> ADDR : addr ← wr_addr (write path)
+RA --> ADDR : addr ← rd_addr (read path)
+
+@enduml

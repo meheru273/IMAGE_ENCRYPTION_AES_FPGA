@@ -1,0 +1,61 @@
+@startuml aes_round_flow
+title AES-128 Encryption Round Structure
+
+skinparam backgroundColor #FEFEFE
+skinparam activity {
+  BackgroundColor #E8F4FD
+  BorderColor #2196F3
+  DiamondBackgroundColor #FFF9C4
+  DiamondBorderColor #F9A825
+  ArrowColor #37474F
+}
+
+start
+
+:128-bit Plaintext Input;
+
+partition "Initial Round" #E8F5E9 {
+  :AddRoundKey
+  (XOR with Round Key 0);
+}
+
+partition "Rounds 1 to 9 (repeat 9 times)" #BBDEFB {
+  :SubBytes
+  (S-Box substitution on each byte)
+  Provides **confusion**;
+
+  :ShiftRows
+  (Cyclic left shift: row i by i positions)
+  Provides **diffusion**;
+
+  :MixColumns
+  (GF(2^8) matrix multiplication per column)
+  Further **diffusion**;
+
+  :AddRoundKey
+  (XOR with Round Key i);
+}
+
+partition "Round 10 (Final -- NO MixColumns)" #FFCCBC {
+  :SubBytes;
+  :ShiftRows;
+  :AddRoundKey
+  (XOR with Round Key 10);
+}
+
+:128-bit Ciphertext Output;
+
+stop
+
+legend right
+  AES-128 uses a 128-bit key
+  expanded into 11 round keys
+  by the Key Expansion algorithm.
+
+  Key schedule uses:
+  * RotWord
+  * SubWord (S-Box)
+  * Rcon (round constant)
+end legend
+
+@enduml

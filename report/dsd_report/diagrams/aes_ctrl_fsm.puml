@@ -1,0 +1,55 @@
+@startuml aes_ctrl_fsm
+title AES Controller FSM — 8-State Handshake Protocol
+
+skinparam backgroundColor #FEFEFE
+skinparam state {
+  BackgroundColor #E3F2FD
+  BorderColor #1565C0
+  ArrowColor #37474F
+  FontSize 11
+}
+
+[*] --> S_IDLE
+
+state "S_IDLE" as S_IDLE #E8F5E9 : Wait for start pulse\nLatch block_in, mode
+state "S_KEY_INIT" as S_KEY_INIT #FFF9C4 : Assert core_init = 1\n(1-cycle pulse)
+state "S_WAIT_KEY_LOW" as S_WAIT_KEY_LOW #FFECB3 : Wait for\ncore_ready = 0\n(key expansion started)
+state "S_WAIT_KEY_HIGH" as S_WAIT_KEY_HIGH #FFECB3 : Wait for\ncore_ready = 1\n(key expansion done)
+state "S_BLOCK_NEXT" as S_BLOCK_NEXT #BBDEFB : Assert core_next = 1\n(1-cycle pulse)
+state "S_WAIT_BLOCK_LOW" as S_WAIT_BLOCK_LOW #C8E6C9 : Wait for\ncore_ready = 0\n(block processing started)
+state "S_WAIT_BLOCK_HIGH" as S_WAIT_BLOCK_HIGH #C8E6C9 : Wait for\ncore_ready = 1\n(block done)\nLatch result
+state "S_DONE" as S_DONE #E8F5E9 : Assert done = 1\n(1-cycle pulse)
+
+S_IDLE --> S_KEY_INIT : start && !key_expanded
+S_IDLE --> S_BLOCK_NEXT : start && key_expanded
+
+S_KEY_INIT --> S_WAIT_KEY_LOW
+
+S_WAIT_KEY_LOW --> S_WAIT_KEY_HIGH : !core_ready
+
+S_WAIT_KEY_HIGH --> S_BLOCK_NEXT : core_ready\n[set key_expanded=1]
+
+S_BLOCK_NEXT --> S_WAIT_BLOCK_LOW
+
+S_WAIT_BLOCK_LOW --> S_WAIT_BLOCK_HIGH : !core_ready
+
+S_WAIT_BLOCK_HIGH --> S_DONE : core_ready\n[latch core_result]
+
+S_DONE --> S_IDLE
+
+note right of S_KEY_INIT
+  Key expansion runs
+  only ONCE per session.
+  Subsequent blocks skip
+  directly to S_BLOCK_NEXT.
+end note
+
+note right of S_WAIT_BLOCK_HIGH
+  The ready-handshake prevents
+  false completion detection:
+  1. Assert init/next
+  2. Wait ready → LOW
+  3. Wait ready → HIGH
+end note
+
+@enduml

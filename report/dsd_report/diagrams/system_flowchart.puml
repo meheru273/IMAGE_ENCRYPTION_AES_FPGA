@@ -1,0 +1,95 @@
+@startuml system_flowchart
+title System Operational Flowchart (4-Mode AES Image Encryption)
+
+skinparam backgroundColor #FEFEFE
+skinparam activity {
+  BackgroundColor #E8F4FD
+  BorderColor #2196F3
+  DiamondBackgroundColor #FFF9C4
+  DiamondBorderColor #F9A825
+  ArrowColor #37474F
+}
+
+start
+
+:Power On / Reset (btnC);
+
+:System IDLE\n(All LEDs OFF);
+note right: Waiting for user\nto set switches\nand press btnR
+
+:User sets SW1, SW0\nand presses **btnR**;
+
+:Receive 16-byte AES Key\nover UART (SYS_KEY_RX);
+note right: Key is shifted in\nbyte-by-byte\ninto key_shift_reg
+
+:DISPATCH — Branch\non latched {SW1, SW0};
+
+if (Mode?) then
+  if (SW1=0, SW0=0) then (Mode 1: Full Encrypt)
+    :Reset pixel buffer\nSet wr_addr = 0;
+    :LED0 ON — Encrypting;
+    
+    repeat
+      :Wait for 16 bytes\nfrom UART (pixel_buffer);
+      :AES Encrypt block\n(aes_ctrl → aes_core);
+      :Write ciphertext\nto BRAM[wr_addr];
+      :wr_addr++;
+    repeat while (wr_addr < 1024?)
+    
+    :Save key as stored_key_reg;
+    :Stream encrypted BRAM\nback over UART;
+    :LED2 ON — Done;
+    
+  elseif (SW1=0, SW0=1) then (Mode 2: Full Decrypt)
+    :Reset pixel buffer\nSet wr_addr = 0;
+    :LED1 ON — Decrypting;
+    
+    repeat
+      :Receive 16 ciphertext\nbytes from UART;
+      :Write raw block\nto BRAM[wr_addr];
+      :wr_addr++;
+    repeat while (wr_addr < 1024?)
+    
+    :Set rd_addr = 0;
+    
+    repeat
+      :Read BRAM[rd_addr];
+      :AES Decrypt block;
+      :TX 16 plaintext bytes\nover UART;
+      :rd_addr++;
+    repeat while (rd_addr < 1024?)
+    
+    :LED2 ON — Done;
+    
+  elseif (SW1=1, SW0=0) then (Mode 3: Key Retrieve)
+    :Compare user_key_reg\n== stored_key_reg?;
+    
+    if (Keys match?) then (Yes)
+      :LED2 ON — Verified;
+      :Stream raw BRAM\ncontents over UART;
+    else (No)
+      :LED3 ON — Error;
+      :Send 0xFF error byte;
+    endif
+    
+  else (Mode 4: Key Decrypt)
+    :LED1 ON — Decrypting;
+    :Set rd_addr = 0;
+    
+    repeat
+      :Read BRAM[rd_addr];
+      :AES Decrypt block;
+      :TX 16 plaintext bytes\nover UART;
+      :rd_addr++;
+    repeat while (rd_addr < 1024?)
+    
+    :LED2 ON — Done;
+    
+  endif
+endif
+
+:Return to IDLE;
+
+stop
+
+@enduml
