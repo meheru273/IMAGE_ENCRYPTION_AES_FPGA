@@ -27,7 +27,9 @@ module top(
     input  wire       mode_sw,       // SW0: 0=encrypt, 1=decrypt
     input  wire       mode_sw1,      // SW1: 0=full image, 1=key-only
     input  wire       btn_start,     // btnR — trigger operation
-    output reg  [3:0] status_led     // LED[3:0] status indicators
+    output reg  [3:0] status_led,    // LED[3:0] status indicators
+    output reg  [6:0] seg,           // 7-segment cathodes (active-low)
+    output reg  [3:0] an             // 7-segment anodes   (active-low)
 );
 
   //----------------------------------------------------------------
@@ -510,6 +512,30 @@ module top(
         default: sys_state <= SYS_IDLE;
       endcase
     end
+  end
+
+  //----------------------------------------------------------------
+  // Seven-Segment Display — show mode number (1–4)
+  // Active-low cathodes, active-low anodes (Basys 3)
+  //   seg = {CA, CB, CC, CD, CE, CF, CG}
+  //   0 = segment ON, 1 = segment OFF
+  //----------------------------------------------------------------
+  always @(*) begin
+    an = 4'b1110;  // only rightmost digit (AN0) active
+
+    case (sys_state)
+      SYS_IDLE:
+        seg = 7'b1111110;  // dash: only middle segment (G) ON
+      default: begin
+        case (mode_latch)
+          2'b00: seg = 7'b1001111;  // "1" — segments B,C ON
+          2'b01: seg = 7'b0010010;  // "2" — segments A,B,D,E,G ON
+          2'b10: seg = 7'b0000110;  // "3" — segments A,B,C,D,G ON
+          2'b11: seg = 7'b1001100;  // "4" — segments B,C,F,G ON
+          default: seg = 7'b1111111;  // all OFF
+        endcase
+      end
+    endcase
   end
 
 endmodule
